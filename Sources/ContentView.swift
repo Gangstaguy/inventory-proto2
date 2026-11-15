@@ -28,7 +28,9 @@ final class CameraView: UIView {
 
 final class ScanModel: ObservableObject {
     let camera = CameraManager()
-    @Published var total = 0, withDate = 0, expired = 0
+    @Published var total = 0
+    @Published var withDate = 0
+    @Published var expired = 0
     weak var view: CameraView?
 
     func start() {
