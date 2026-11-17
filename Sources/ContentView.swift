@@ -6,16 +6,26 @@ final class CameraView: UIView {
     var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
     private var overlays: [CALayer] = []
 
-    func show(_ products: [Detection], _ dates: [DateBox]) {
+    func show(_ products: [Detection], _ dates: [DateBox], imageSize: CGSize) {
         overlays.forEach { $0.removeFromSuperlayer() }
         overlays = []
-        for p in products { add(p.rect, color: p.status.color, width: 3) }
-        for d in dates { add(d.rect, color: .systemYellow, width: 2) }   // datum = gul outline
+        for p in products { add(p.rect, imageSize, color: p.status.color, width: 3) }
+        for d in dates { add(d.rect, imageSize, color: .systemYellow, width: 2) }
     }
 
-    private func add(_ r: CGRect, color: UIColor, width: CGFloat) {
-        let flipped = CGRect(x: r.minX, y: 1 - r.maxY, width: r.width, height: r.height)
-        let frame = previewLayer.layerRectConverted(fromMetadataOutputRect: flipped)
+    /// Vision-ruta (0–1, origo nere till vänster) → skärmkoordinater för resizeAspectFill.
+    private func convert(_ r: CGRect, _ img: CGSize) -> CGRect {
+        let vw = bounds.width, vh = bounds.height
+        guard img.width > 0, img.height > 0, vw > 0, vh > 0 else { return .zero }
+        let scale = max(vw / img.width, vh / img.height)
+        let dw = img.width * scale, dh = img.height * scale
+        let ox = (vw - dw) / 2, oy = (vh - dh) / 2
+        return CGRect(x: ox + r.minX * dw, y: oy + (1 - r.maxY) * dh,
+                      width: r.width * dw, height: r.height * dh)
+    }
+
+    private func add(_ r: CGRect, _ img: CGSize, color: UIColor, width: CGFloat) {
+        let frame = convert(r, img)
         let l = CAShapeLayer()
         l.path = UIBezierPath(roundedRect: frame, cornerRadius: 4).cgPath
         l.strokeColor = color.cgColor
@@ -28,17 +38,22 @@ final class CameraView: UIView {
 
 final class ScanModel: ObservableObject {
     let camera = CameraManager()
+    private let productTracker = BoxTracker()
+    private let dateTracker = DateTracker()
     @Published var total = 0
     @Published var withDate = 0
     @Published var expired = 0
     weak var view: CameraView?
 
     func start() {
-        camera.onResult = { [weak self] products, dates in
-            self?.view?.show(products, dates)
-            self?.total = products.count
-            self?.withDate = products.filter { $0.expiry != nil }.count
-            self?.expired = products.filter { $0.status == .expired }.count
+        camera.onResult = { [weak self] products, dates, size in
+            guard let self = self else { return }
+            let p = self.productTracker.update(products)
+            let d = self.dateTracker.update(dates)
+            self.view?.show(p, d, imageSize: size)
+            self.total = p.count
+            self.withDate = p.filter { $0.expiry != nil }.count
+            self.expired = p.filter { $0.status == .expired }.count
         }
         camera.start()
     }

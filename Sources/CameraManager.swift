@@ -1,12 +1,13 @@
 import AVFoundation
+import QuartzCore
 
 final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     let session = AVCaptureSession()
-    var onResult: (([Detection], [DateBox]) -> Void)?
+    var onResult: (([Detection], [DateBox], CGSize) -> Void)?
 
     private let queue = DispatchQueue(label: "camera.frames")
     private let detector = Detector()
-    private var busy = false
+    private var lastRun: CFTimeInterval = 0
 
     func start() {
         AVCaptureDevice.requestAccess(for: .video) { [weak self] ok in
@@ -35,10 +36,12 @@ final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
-        guard !busy, let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        busy = true
-        let (products, dates) = detector.analyze(buffer)
-        busy = false
-        DispatchQueue.main.async { self.onResult?(products, dates) }
+        // Max ca 10 analyser i sekunden – lugnare och snällare mot batteriet.
+        let now = CACurrentMediaTime()
+        guard now - lastRun > 0.1,
+              let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        lastRun = now
+        let (products, dates, size) = detector.analyze(buffer)
+        DispatchQueue.main.async { self.onResult?(products, dates, size) }
     }
 }
