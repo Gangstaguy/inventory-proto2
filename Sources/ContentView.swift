@@ -9,8 +9,12 @@ final class CameraView: UIView {
     func show(_ products: [Detection], _ dates: [DateBox], imageSize: CGSize) {
         overlays.forEach { $0.removeFromSuperlayer() }
         overlays = []
+        let today = Calendar.current.startOfDay(for: Date())
         for p in products { add(p.rect, imageSize, color: p.status.color, width: 3) }
-        for d in dates { add(d.rect, imageSize, color: .systemYellow, width: 2) }
+        // Datum: gul = gäller, orange = har passerat.
+        for d in dates {
+            add(d.rect, imageSize, color: d.date < today ? .systemOrange : .systemYellow, width: 2)
+        }
     }
 
     /// Vision-ruta (0–1, origo nere till vänster) → skärmkoordinater för resizeAspectFill.
@@ -48,8 +52,8 @@ final class ScanModel: ObservableObject {
     func start() {
         camera.onResult = { [weak self] products, dates, size in
             guard let self = self else { return }
-            let p = self.productTracker.update(products)
             let d = self.dateTracker.update(dates)
+            let p = self.productTracker.update(products, dates: d)
             self.view?.show(p, d, imageSize: size)
             self.total = p.count
             self.withDate = p.filter { $0.expiry != nil }.count

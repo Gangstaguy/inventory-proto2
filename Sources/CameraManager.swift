@@ -20,8 +20,9 @@ final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         guard let device = AVCaptureDevice.default(for: .video),
               let input = try? AVCaptureDeviceInput(device: device) else { return }
         session.beginConfiguration()
-        session.sessionPreset = .hd1920x1080
         if session.canAddInput(input) { session.addInput(input) }
+        // Högre upplösning ger läsbara små datum. Faller tillbaka till 1080p.
+        session.sessionPreset = session.canSetSessionPreset(.hd4K3840x2160) ? .hd4K3840x2160 : .hd1920x1080
         let output = AVCaptureVideoDataOutput()
         output.alwaysDiscardsLateVideoFrames = true
         output.setSampleBufferDelegate(self, queue: queue)
@@ -31,14 +32,21 @@ final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
             else { conn.videoOrientation = .portrait }
         }
         session.commitConfiguration()
+
+        do {
+            try device.lockForConfiguration()
+            if device.isFocusModeSupported(.continuousAutoFocus) { device.focusMode = .continuousAutoFocus }
+            device.unlockForConfiguration()
+        } catch {}
+
         session.startRunning()
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
-        // Max ca 10 analyser i sekunden – lugnare och snällare mot batteriet.
+        // Max ca 7 analyser i sekunden (4K är tungt).
         let now = CACurrentMediaTime()
-        guard now - lastRun > 0.1,
+        guard now - lastRun > 0.15,
               let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         lastRun = now
         let (products, dates, size) = detector.analyze(buffer)

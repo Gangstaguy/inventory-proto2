@@ -1,10 +1,13 @@
 import Vision
 import CoreML
+import CoreImage
+import ImageIO
 
-/// Steg 1: hitta produkter. Steg 2: hitta datumtext. Steg 3: para ihop dem.
+/// Steg 1: hitta produkter. Steg 2: hitta datumtext. Paras ihop i BoxTracker.
 final class Detector {
     private var productRequest: VNRequest
     private let textRequest: VNRecognizeTextRequest
+    private var frameCount = 0
 
     init() {
         // Lägg en tränad YOLO-modell i projektet och döp den till ProductDetector.mlmodel.
@@ -16,32 +19,47 @@ final class Detector {
             productRequest = r
         } else {
             let r = VNDetectRectanglesRequest()
-            r.minimumAspectRatio = 0.3     // inga extremt smala rutor
-            r.minimumSize = 0.15           // minst 15 % av bilden
-            r.minimumConfidence = 0.8      // bara tydliga rektanglar
-            r.quadratureTolerance = 15
-            r.maximumObservations = 6
+            r.minimumAspectRatio = 0.25
+            r.minimumSize = 0.08           // känsligare: minst 8 % av bilden
+            r.minimumConfidence = 0.6
+            r.quadratureTolerance = 20
+            r.maximumObservations = 10
             productRequest = r
         }
         textRequest = VNRecognizeTextRequest()
-        textRequest.recognitionLevel = .fast
         textRequest.usesLanguageCorrection = false
+        textRequest.recognitionLanguages = ["en-US"]
     }
 
-    /// Returnerar produkter, datumrutor och bildens storlek (upprätt).
+    /// Returnerar produktrutor, datumrutor och bildens storlek (upprätt).
     func analyze(_ buffer: CVPixelBuffer) -> ([Detection], [DateBox], CGSize) {
+        frameCount += 1
         let w = CVPixelBufferGetWidth(buffer)
         let h = CVPixelBufferGetHeight(buffer)
         let landscape = w > h
-        // Ligger bilden liggande vrider vi den upprätt åt Vision.
-        let handler = VNImageRequestHandler(cvPixelBuffer: buffer,
-                                            orientation: landscape ? .right : .up)
+        let orient: CGImagePropertyOrientation = landscape ? .right : .up
         let size = landscape ? CGSize(width: h, height: w) : CGSize(width: w, height: h)
-        try? handler.perform([productRequest, textRequest])
+
+        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orient)
+        // Varannan bildruta: suddar ihop prickar (prickmatristext) och höjer kontrasten före OCR.
+        let useBlur = frameCount % 2 == 0
+        textRequest.recognitionLevel = useBlur ? .accurate : .fast
+        if useBlur {
+            let ci = CIImage(cvPixelBuffer: buffer)
+            let processed = ci.applyingGaussianBlur(sigma: 1.5)
+                .cropped(to: ci.extent)
+                .applyingFilter("CIColorControls",
+                                parameters: [kCIInputSaturationKey: 0.0, kCIInputContrastKey: 1.8])
+            let textHandler = VNImageRequestHandler(ciImage: processed, orientation: orient)
+            try? handler.perform([productRequest])
+            try? textHandler.perform([textRequest])
+        } else {
+            try? handler.perform([productRequest, textRequest])
+        }
 
         var boxes: [CGRect] = []
         if let objs = productRequest.results as? [VNRecognizedObjectObservation] {
-            boxes = objs.filter { $0.confidence > 0.4 }.map { $0.boundingBox }
+            boxes = objs.filter { $0.confidence > 0.3 }.map { $0.boundingBox }
         } else if let rects = productRequest.results as? [VNRectangleObservation] {
             boxes = rects.map { $0.boundingBox }
         }
@@ -53,12 +71,7 @@ final class Detector {
             dates.append(DateBox(rect: t.boundingBox, date: date))
         }
 
-        let today = Calendar.current.startOfDay(for: Date())
-        let products = boxes.map { box -> Detection in
-            let match = dates.first { box.contains(CGPoint(x: $0.rect.midX, y: $0.rect.midY)) }
-            guard let m = match else { return Detection(rect: box, status: .found, expiry: nil) }
-            return Detection(rect: box, status: m.date < today ? .expired : .valid, expiry: m.date)
-        }
+        let products = boxes.map { Detection(rect: $0, status: .found, expiry: nil) }
         return (products, dates, size)
     }
 }
