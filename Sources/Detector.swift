@@ -18,12 +18,13 @@ final class Detector {
             r.imageCropAndScaleOption = .scaleFill
             productRequest = r
         } else {
+            // Känslighet v4 (v2 = 1,0 · v3 = ca 1,9 · v4 = ca 1,4)
             let r = VNDetectRectanglesRequest()
-            r.minimumAspectRatio = 0.25
-            r.minimumSize = 0.08           // känsligare: minst 8 % av bilden
-            r.minimumConfidence = 0.6
-            r.quadratureTolerance = 20
-            r.maximumObservations = 10
+            r.minimumAspectRatio = 0.28
+            r.minimumSize = 0.11           // minst 11 % av bilden
+            r.minimumConfidence = 0.7
+            r.quadratureTolerance = 17
+            r.maximumObservations = 8
             productRequest = r
         }
         textRequest = VNRecognizeTextRequest()
@@ -68,7 +69,7 @@ final class Detector {
         for t in (textRequest.results ?? []) {
             guard let text = t.topCandidates(1).first?.string,
                   let date = DateParser.parse(text) else { continue }
-            dates.append(DateBox(rect: t.boundingBox, date: date))
+            dates.append(DateBox(rect: t.boundingBox, date: date, text: text))
         }
 
         let products = boxes.map { Detection(rect: $0, status: .found, expiry: nil) }

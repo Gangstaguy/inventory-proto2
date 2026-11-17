@@ -10,11 +10,27 @@ final class CameraView: UIView {
         overlays.forEach { $0.removeFromSuperlayer() }
         overlays = []
         let today = Calendar.current.startOfDay(for: Date())
-        for p in products { add(p.rect, imageSize, color: p.status.color, width: 3) }
+        for p in products { _ = add(p.rect, imageSize, color: p.status.color, width: 3) }
         // Datum: gul = gäller, orange = har passerat.
+        // Etiketten visar vad OCR läste → hur datumet tolkades.
         for d in dates {
-            add(d.rect, imageSize, color: d.date < today ? .systemOrange : .systemYellow, width: 2)
+            let color: UIColor = d.date < today ? .systemOrange : .systemYellow
+            let frame = add(d.rect, imageSize, color: color, width: 2)
+            addLabel("\(d.text) → \(DateParser.format(d.date))", above: frame)
         }
+    }
+
+    private func addLabel(_ text: String, above frame: CGRect) {
+        let t = CATextLayer()
+        t.string = text
+        t.fontSize = 12
+        t.foregroundColor = UIColor.white.cgColor
+        t.backgroundColor = UIColor.black.withAlphaComponent(0.65).cgColor
+        t.contentsScale = window?.screen.scale ?? 3
+        t.frame = CGRect(x: frame.minX, y: max(0, frame.minY - 18),
+                         width: max(frame.width, 190), height: 16)
+        layer.addSublayer(t)
+        overlays.append(t)
     }
 
     /// Vision-ruta (0–1, origo nere till vänster) → skärmkoordinater för resizeAspectFill.
@@ -28,7 +44,7 @@ final class CameraView: UIView {
                       width: r.width * dw, height: r.height * dh)
     }
 
-    private func add(_ r: CGRect, _ img: CGSize, color: UIColor, width: CGFloat) {
+    private func add(_ r: CGRect, _ img: CGSize, color: UIColor, width: CGFloat) -> CGRect {
         let frame = convert(r, img)
         let l = CAShapeLayer()
         l.path = UIBezierPath(roundedRect: frame, cornerRadius: 4).cgPath
@@ -37,6 +53,7 @@ final class CameraView: UIView {
         l.lineWidth = width
         layer.addSublayer(l)
         overlays.append(l)
+        return frame
     }
 }
 

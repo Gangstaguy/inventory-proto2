@@ -24,4 +24,5 @@ struct Detection {
 struct DateBox {
     var rect: CGRect
     var date: Date
+    var text: String   // råtexten som OCR läste, visas på skärmen för felsökning
 }
