@@ -7,7 +7,13 @@ targets:
   InventoryProto:
     type: application
     platform: iOS
-    sources: [Sources]
+    sources:
+      - path: Sources
+      - path: Data
+        buildPhase: resources
+      - path: ModelRes/ProductEmbedder.mlmodelc
+        type: folder
+        buildPhase: resources
     info:
       path: Info.plist
       properties:
