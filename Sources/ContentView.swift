@@ -10,14 +10,48 @@ final class CameraView: UIView {
         overlays.forEach { $0.removeFromSuperlayer() }
         overlays = []
         let today = Calendar.current.startOfDay(for: Date())
-        for p in products { _ = add(p.rect, imageSize, color: p.status.color, width: 3) }
-        // Datum: gul = gäller, orange = har passerat.
-        // Etiketten visar vad OCR läste → hur datumet tolkades.
+
+        // Produkter: blå/grön/röd ruta efter datum, text efter vilken produkt den bedömts vara.
+        for p in products {
+            let frame = add(p.rect, imageSize, color: p.status.color, width: 3)
+            addProductLabel(p, in: frame)
+        }
+        // Datum: gul = gäller, orange = har passerat. Etiketten visar vad OCR läste → tolkat datum.
         for d in dates {
             let color: UIColor = d.date < today ? .systemOrange : .systemYellow
             let frame = add(d.rect, imageSize, color: color, width: 2)
             addLabel("\(d.text) → \(DateParser.format(d.date))", above: frame)
         }
+    }
+
+    static func isSure(_ p: Detection) -> Bool {
+        guard let m = p.match else { return false }
+        return m.score >= Config.minScore && p.margin >= Config.minMargin
+    }
+
+    /// Svart etikett = säker träff. Orange etikett med "?" = osäker (visar även näst bästa alternativ).
+    private func addProductLabel(_ p: Detection, in frame: CGRect) {
+        guard let m = p.match else { return }
+        let sure = CameraView.isSure(p)
+        let prefix = sure ? "" : "? "
+        let likhet = String(format: "%.2f", m.score)
+        var text = "\(prefix)\(m.titel) – \(m.varumarke)\n\(m.mangd) · likhet \(likhet)"
+        if !sure, let alt = p.alternative {
+            text += "\neller: \(alt.titel) – \(alt.varumarke)"
+        }
+        let t = CATextLayer()
+        t.string = text
+        t.fontSize = 11
+        t.isWrapped = true
+        t.truncationMode = .end
+        t.foregroundColor = UIColor.white.cgColor
+        t.backgroundColor = (sure ? UIColor.black.withAlphaComponent(0.7)
+                                  : UIColor.systemOrange.withAlphaComponent(0.9)).cgColor
+        t.contentsScale = window?.screen.scale ?? 3
+        t.frame = CGRect(x: frame.minX + 3, y: frame.minY + 3,
+                         width: max(frame.width - 6, 150), height: sure ? 30 : 44)
+        layer.addSublayer(t)
+        overlays.append(t)
     }
 
     private func addLabel(_ text: String, above frame: CGRect) {
@@ -59,23 +93,23 @@ final class CameraView: UIView {
 
 final class ScanModel: ObservableObject {
     let camera = CameraManager()
-    private let productTracker = BoxTracker()
-    private let dateTracker = DateTracker()
     @Published var total = 0
     @Published var withDate = 0
     @Published var expired = 0
+    @Published var identified = 0
+    @Published var status = "startar..."
     weak var view: CameraView?
 
     func start() {
         camera.onResult = { [weak self] products, dates, size in
             guard let self = self else { return }
-            let d = self.dateTracker.update(dates)
-            let p = self.productTracker.update(products, dates: d)
-            self.view?.show(p, d, imageSize: size)
-            self.total = p.count
-            self.withDate = p.filter { $0.expiry != nil }.count
-            self.expired = p.filter { $0.status == .expired }.count
+            self.view?.show(products, dates, imageSize: size)
+            self.total = products.count
+            self.withDate = products.filter { $0.expiry != nil }.count
+            self.expired = products.filter { $0.status == .expired }.count
+            self.identified = products.filter { CameraView.isSure($0) }.count
         }
+        camera.onStatus = { [weak self] text in self?.status = text }
         camera.start()
     }
 }
@@ -98,8 +132,9 @@ struct ContentView: View {
     var body: some View {
         ZStack(alignment: .top) {
             CameraRepresentable(model: model).ignoresSafeArea()
-            HStack(spacing: 16) {
+            HStack(spacing: 14) {
                 Label("\(model.total)", systemImage: "square.stack.3d.up").foregroundStyle(.blue)
+                Label("\(model.identified)", systemImage: "checkmark.seal").foregroundStyle(.white)
                 Label("\(model.withDate)", systemImage: "calendar").foregroundStyle(.green)
                 Label("\(model.expired)", systemImage: "exclamationmark.triangle").foregroundStyle(.red)
             }
@@ -107,6 +142,13 @@ struct ContentView: View {
             .padding(10)
             .background(.ultraThinMaterial, in: Capsule())
             .padding(.top, 8)
+        }
+        .overlay(alignment: .bottom) {
+            Text(model.status)
+                .font(.caption2)
+                .padding(6)
+                .background(.ultraThinMaterial, in: Capsule())
+                .padding(.bottom, 8)
         }
         .onAppear { model.start() }
     }

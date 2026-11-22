@@ -3,10 +3,12 @@ import QuartzCore
 
 final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     let session = AVCaptureSession()
+    /// Anropas på huvudtråden.
     var onResult: (([Detection], [DateBox], CGSize) -> Void)?
+    var onStatus: ((String) -> Void)?
 
     private let queue = DispatchQueue(label: "camera.frames")
-    private let detector = Detector()
+    private lazy var pipeline = Pipeline()     // används bara på `queue`
     private var lastRun: CFTimeInterval = 0
 
     func start() {
@@ -19,6 +21,11 @@ final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     private func configure() {
         guard let device = AVCaptureDevice.default(for: .video),
               let input = try? AVCaptureDeviceInput(device: device) else { return }
+
+        // Läser in modell och produktindex innan kameran startar.
+        let status = pipeline.statusText
+        DispatchQueue.main.async { self.onStatus?(status) }
+
         session.beginConfiguration()
         if session.canAddInput(input) { session.addInput(input) }
         // Högre upplösning ger läsbara små datum. Faller tillbaka till 1080p.
@@ -49,7 +56,7 @@ final class CameraManager: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         guard now - lastRun > 0.15,
               let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         lastRun = now
-        let (products, dates, size) = detector.analyze(buffer)
+        let (products, dates, size) = pipeline.process(buffer)
         DispatchQueue.main.async { self.onResult?(products, dates, size) }
     }
 }

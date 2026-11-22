@@ -32,13 +32,18 @@ final class Detector {
         textRequest.recognitionLanguages = ["en-US"]
     }
 
+    /// Liggande buffert vrids upprätt åt Vision och Core Image.
+    static func orientation(of buffer: CVPixelBuffer) -> CGImagePropertyOrientation {
+        CVPixelBufferGetWidth(buffer) > CVPixelBufferGetHeight(buffer) ? .right : .up
+    }
+
     /// Returnerar produktrutor, datumrutor och bildens storlek (upprätt).
     func analyze(_ buffer: CVPixelBuffer) -> ([Detection], [DateBox], CGSize) {
         frameCount += 1
         let w = CVPixelBufferGetWidth(buffer)
         let h = CVPixelBufferGetHeight(buffer)
         let landscape = w > h
-        let orient: CGImagePropertyOrientation = landscape ? .right : .up
+        let orient = Detector.orientation(of: buffer)
         let size = landscape ? CGSize(width: h, height: w) : CGSize(width: w, height: h)
 
         let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orient)

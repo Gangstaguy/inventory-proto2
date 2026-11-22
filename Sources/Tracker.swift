@@ -3,8 +3,10 @@ import Foundation
 
 /// Stabiliserar rutorna: visas först efter ett par träffar, glider mjukt,
 /// förutsäger rörelsen och behåller rutan en stund om produkten tappas i någon bildruta.
+/// Varje ruta ("spår") har ett id och minns sina produktträffar mellan bildrutorna.
 final class BoxTracker {
     private struct Track {
+        var id: Int
         var rect: CGRect
         var vx: CGFloat = 0
         var vy: CGFloat = 0
@@ -12,9 +14,14 @@ final class BoxTracker {
         var misses: Int
         var expiry: Date?
         var dateAge: Int
+        var emb: [Float]? = nil      // glidande medelvärde av fingeravtryck
+        var embN: Int = 0
+        var identAge: Int = 100      // bildrutor sedan senaste identifiering
+        var matches: [ProductMatch] = []
     }
 
     private var tracks: [Track] = []
+    private var nextId = 1
     private let confirmHits = 2
     private let maxMisses = 10
 
@@ -43,6 +50,7 @@ final class BoxTracker {
                height: a.height + (b.height - a.height) * t)
     }
 
+    @discardableResult
     func update(_ raw: [Detection], dates: [DateBox]) -> [Detection] {
         // Para ihop produkter med datum som "hålls kvar" av DateTracker.
         let detections = raw.map { det -> Detection in
@@ -55,6 +63,7 @@ final class BoxTracker {
 
         var unmatched = Array(detections.indices)
         for i in tracks.indices {
+            tracks[i].identAge += 1
             let predicted = tracks[i].rect.offsetBy(dx: tracks[i].vx, dy: tracks[i].vy)
             var bestJ: Int? = nil
             var bestScore: CGFloat = 0.2
@@ -88,16 +97,63 @@ final class BoxTracker {
         }
         for j in unmatched {
             let d = detections[j]
-            tracks.append(Track(rect: d.rect, hits: 1, misses: 0, expiry: d.expiry, dateAge: 0))
+            tracks.append(Track(id: nextId, rect: d.rect, hits: 1, misses: 0,
+                                expiry: d.expiry, dateAge: 0))
+            nextId += 1
         }
         tracks.removeAll { $0.misses > maxMisses }
+        return snapshot()
+    }
 
+    /// Nuvarande bekräftade rutor, med produktträffar.
+    func snapshot() -> [Detection] {
         let today = Calendar.current.startOfDay(for: Date())
         return tracks.filter { $0.hits >= confirmHits }.map { t in
             var status = ProductStatus.found
             if let e = t.expiry { status = e < today ? .expired : .valid }
-            return Detection(rect: t.rect, status: status, expiry: t.expiry)
+            var margin: Float = 1
+            var alt: ProductMatch? = nil
+            if t.matches.count > 1 {
+                margin = t.matches[0].score - t.matches[1].score
+                alt = t.matches[1]
+            }
+            return Detection(rect: t.rect, status: status, expiry: t.expiry,
+                             id: t.id, match: t.matches.first, margin: margin, alternative: alt)
         }
+    }
+
+    // MARK: - Identifiering
+
+    /// Vilka rutor som ska få ett nytt fingeravtryck nu (nya först).
+    func idsNeedingIdentification(limit: Int) -> [Int] {
+        let c = tracks.filter {
+            $0.hits >= confirmHits && $0.misses == 0 &&
+            $0.rect.width > 0.08 && $0.rect.height > 0.08 &&
+            (($0.embN < 5 && $0.identAge >= 2) || $0.identAge >= 40)
+        }
+        return c.sorted { $0.embN < $1.embN }.prefix(limit).map { $0.id }
+    }
+
+    func rect(of id: Int) -> CGRect? {
+        tracks.first(where: { $0.id == id })?.rect
+    }
+
+    /// Lägger till ett nytt fingeravtryck och returnerar medelvärdet.
+    func addEmbedding(_ id: Int, _ v: [Float]) -> [Float]? {
+        guard let i = tracks.firstIndex(where: { $0.id == id }) else { return nil }
+        if var e = tracks[i].emb, e.count == v.count {
+            for k in 0..<e.count { e[k] = e[k] * 0.75 + v[k] }
+            tracks[i].emb = e
+        } else {
+            tracks[i].emb = v
+        }
+        tracks[i].embN += 1
+        tracks[i].identAge = 0
+        return tracks[i].emb
+    }
+
+    func setMatches(_ id: Int, _ m: [ProductMatch]) {
+        if let i = tracks.firstIndex(where: { $0.id == id }) { tracks[i].matches = m }
     }
 }
 
