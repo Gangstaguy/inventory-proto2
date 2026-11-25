@@ -13,7 +13,10 @@ final class CameraView: UIView {
 
         // Produkter: blå/grön/röd ruta efter datum, text efter vilken produkt den bedömts vara.
         for p in products {
-            let frame = add(p.rect, imageSize, color: p.status.color, width: 3)
+            let known = p.match != nil
+            let frame = add(p.rect, imageSize,
+                            color: known ? p.status.color : p.status.color.withAlphaComponent(0.5),
+                            width: known ? 3 : 1.5)
             addProductLabel(p, in: frame)
         }
         // Datum: gul = gäller, orange = har passerat. Etiketten visar vad OCR läste → tolkat datum.
@@ -34,8 +37,12 @@ final class CameraView: UIView {
         guard let m = p.match else { return }
         let sure = CameraView.isSure(p)
         let prefix = sure ? "" : "? "
-        let likhet = String(format: "%.2f", m.score)
-        var text = "\(prefix)\(m.titel) – \(m.varumarke)\n\(m.mangd) · likhet \(likhet)"
+        let likhet = String(format: "%.2f", m.sim)
+        var detaljer = "likhet \(likhet)"
+        if m.brandHit { detaljer += " · märke ✓" }
+        if m.brandMismatch { detaljer += " · märke ✗" }
+        if m.titleCov > 0 { detaljer += " · text \(Int(m.titleCov * 100)) %" }
+        var text = "\(prefix)\(m.titel) – \(m.varumarke)\n\(m.mangd) · \(detaljer)"
         if !sure, let alt = p.alternative {
             text += "\neller: \(alt.titel) – \(alt.varumarke)"
         }

@@ -18,6 +18,8 @@ final class BoxTracker {
         var embN: Int = 0
         var identAge: Int = 100      // bildrutor sedan senaste identifiering
         var matches: [ProductMatch] = []
+        var words: Set<String> = []  // ord som kameran läst på just den här förpackningen
+        var searchedWords: Int = -1  // antal ord vid senaste sökningen
     }
 
     private var tracks: [Track] = []
@@ -153,7 +155,39 @@ final class BoxTracker {
     }
 
     func setMatches(_ id: Int, _ m: [ProductMatch]) {
-        if let i = tracks.firstIndex(where: { $0.id == id }) { tracks[i].matches = m }
+        if let i = tracks.firstIndex(where: { $0.id == id }) {
+            tracks[i].matches = m
+            tracks[i].searchedWords = tracks[i].words.count
+        }
+    }
+
+    func embedding(of id: Int) -> [Float]? {
+        tracks.first(where: { $0.id == id })?.emb
+    }
+
+    func words(of id: Int) -> Set<String> {
+        tracks.first(where: { $0.id == id })?.words ?? []
+    }
+
+    /// Lägger texten som kameran läst till de rutor den ligger i.
+    func addText(_ lines: [TextLine]) {
+        for l in lines {
+            let toks = TextMatch.tokens(l.text)
+            if toks.isEmpty { continue }
+            let c = CGPoint(x: l.rect.midX, y: l.rect.midY)
+            for i in tracks.indices where tracks[i].rect.contains(c) {
+                for t in toks where tracks[i].words.count < 150 {
+                    tracks[i].words.insert(t)
+                }
+            }
+        }
+    }
+
+    /// Rutor som har fått nya ord sedan senaste sökningen (sök om utan nytt fingeravtryck).
+    func idsNeedingResearch(limit: Int) -> [Int] {
+        tracks.filter {
+            $0.hits >= confirmHits && $0.emb != nil && $0.words.count != $0.searchedWords
+        }.prefix(limit).map { $0.id }
     }
 }
 

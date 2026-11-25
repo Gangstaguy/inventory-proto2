@@ -3,7 +3,8 @@ import CoreGraphics
 import CoreVideo
 
 /// Hela kedjan för en bildruta:
-/// hitta rutor → läs datum → spåra → fingeravtryck → sök i produktindexet.
+/// hitta rutor → läs text och datum → spåra → fingeravtryck → sök i produktindexet
+/// (bild + märke + text tillsammans).
 final class Pipeline {
     private let detector = Detector()
     private let productTracker = BoxTracker()
@@ -18,9 +19,10 @@ final class Pipeline {
     }
 
     func process(_ buffer: CVPixelBuffer) -> ([Detection], [DateBox], CGSize) {
-        let (raw, dates, size) = detector.analyze(buffer)
-        let heldDates = dateTracker.update(dates)
-        var products = productTracker.update(raw, dates: heldDates)
+        let a = detector.analyze(buffer)
+        let heldDates = dateTracker.update(a.dates)
+        var products = productTracker.update(a.products, dates: heldDates)
+        productTracker.addText(a.lines)
 
         if let embedder = embedder, let index = index {
             let orient = Detector.orientation(of: buffer)
@@ -29,10 +31,15 @@ final class Pipeline {
                 guard let rect = productTracker.rect(of: id),
                       let v = embedder.embed(buffer: buffer, orientation: orient, rect: rect),
                       let avg = productTracker.addEmbedding(id, v) else { continue }
-                productTracker.setMatches(id, index.search(avg, k: 3))
+                productTracker.setMatches(id, index.search(avg, words: productTracker.words(of: id), k: 3))
+            }
+            // Ny sökning när mer text lästs på en förpackning (märke, produktnamn).
+            for id in productTracker.idsNeedingResearch(limit: 3) {
+                guard let avg = productTracker.embedding(of: id) else { continue }
+                productTracker.setMatches(id, index.search(avg, words: productTracker.words(of: id), k: 3))
             }
             products = productTracker.snapshot()
         }
-        return (products, heldDates, size)
+        return (products, heldDates, a.size)
     }
 }
